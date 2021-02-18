@@ -1,0 +1,12 @@
+numpy
+opencv-python
+lmfit
+matplotlib
+scipy
+scikit-learn
+tqdm
+open3d
+numba
+bokeh
+tensorflow
+
