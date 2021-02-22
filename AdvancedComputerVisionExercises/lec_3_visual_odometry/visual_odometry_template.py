@@ -4,7 +4,6 @@ import cv2
 
 from lib.visualization import plotting
 from lib.visualization.video import play_trip
-from matplotlib import pyplot as plt
 
 from tqdm import tqdm
 
@@ -116,7 +115,7 @@ class VisualOdometry():
         # Return a list of the good matches for each image, sorted such that the n'th descriptor in image i matches the n'th descriptor in image i-1
         # https://docs.opencv.org/master/d1/de0/tutorial_py_feature_homography.html
         img_i = self.images[i]
-        img_i_1 = self.images[i-1]
+        img_i_1 = self.images[i - 1]
 
         # find the keypoints with ORB
         kp_i = self.orb.detect(img_i, None)
@@ -127,21 +126,23 @@ class VisualOdometry():
         kp_i_1, des_i_1 = self.orb.compute(img_i_1, kp_i_1)
 
         matches = self.flann.knnMatch(des_i_1, des_i, k=2)
-
         q1 = []
         q2 = []
 
         # ratio test as per Lowe's paper
         for i, (m, n) in enumerate(matches):
             if m.distance < 0.7 * n.distance:
-                q1.append(kp_i[n.trainIdx].pt)
-                q2.append(kp_i_1[m.trainIdx].pt)
+                q1.append(kp_i[m.trainIdx].pt)
+                q2.append(kp_i_1[m.queryIdx].pt)
 
+        q1 = np.float32(q1).reshape(-1,1,2)
+        q2 = np.float32(q2).reshape(-1, 1, 2)
         # draw only keypoints location,not size and orientation
         #img2 = cv2.drawKeypoints(img_i, kp_i, outImage=None, color=(0, 255, 0), flags=0)
-        #plt.imshow(img2), plt.show()
 
-        return np.asarray(q1), np.asarray(q2)
+
+        return q1,q2
+
 
     def get_pose(self, q1, q2):
         """
@@ -159,13 +160,13 @@ class VisualOdometry():
         # Estimate the Essential matrix using built in OpenCV function
         # Use decomp_essential_mat to decompose the Essential matrix into R and t
         # Use the provided function to convert R and t to a transformation matrix T
-
         E, mask = cv2.findEssentialMat(q2, q1, cameraMatrix=self.K)
-        right_pair = self.decomp_essential_mat(E, q1, q2)
+
+        right_pair = self.decomp_essential_mat2(E, q1, q2)
+
         return VisualOdometry._form_transf(right_pair[0], right_pair[1])
 
-
-    def decomp_essential_mat(self, E, q1, q2):
+    def decomp_essential_mat2(self, E, q1, q2):
         """
         Decompose the Essential matrix
 
@@ -179,7 +180,6 @@ class VisualOdometry():
         -------
         right_pair (list): Contains the rotation matrix and translation vector
         """
-
         # Decompose the Essential matrix using built in OpenCV function
         # Form the 4 possible transformation matrix T from R1, R2, and t
         # Create projection matrix using each T, and triangulate points hom_Q1
@@ -187,44 +187,41 @@ class VisualOdometry():
         # Count how many points in hom_Q1 and hom_Q2 with positive z value
         # Return R and t pair which resulted in the most points with positive z
         R1, R2, t = cv2.decomposeEssentialMat(E)
-        t = np.reshape(t,(3))
+        t = np.reshape(t, (3))
 
         right_pairs = [[R1, t], [R1, -t], [R2, t], [R2, -t]]
         Ts = []
 
         for rp in right_pairs:
-            Ts.append(VisualOdometry._form_transf(rp[0],rp[1]))
+            Ts.append(VisualOdometry._form_transf(rp[0], rp[1]))
 
-        K = np.zeros((3,4))
+        K = np.zeros((3, 4))
         K[:3, :3] = self.K
 
         index_of_most_positive_zs = 0
         most_positive_zs = 0
         for i, T in enumerate(Ts):
             P = np.matmul(K, T)
-            hom_Q1 = cv2.triangulatePoints(self.P, P, q2.T, q1.T)
+            hom_Q1 = cv2.triangulatePoints(self.P, P, q2, q1)
             hom_Q2 = np.matmul(T, hom_Q1)
 
-            Q1 = hom_Q1 / hom_Q1[3,:]
-            Q2 = hom_Q2 / hom_Q2[3,:]
+            Q1 = hom_Q1 / hom_Q1[3, :]
+            Q2 = hom_Q2 / hom_Q2[3, :]
 
-            Q1_pos_zs = list(filter(lambda z: z > 0, Q1.T[:, 2]))
-            Q2_pos_zs = list(filter(lambda z: z > 0, Q2.T[:, 2]))
-
+            Q1_pos_zs = list(filter(lambda z: z > 0, Q1[2, :]))
+            Q2_pos_zs = list(filter(lambda z: z > 0, Q2[2, :]))
             if most_positive_zs < len(Q1_pos_zs) + len(Q2_pos_zs):
                 most_positive_zs = len(Q1_pos_zs) + len(Q2_pos_zs)
                 index_of_most_positive_zs = i
 
-        self.P = np.matmul(K, Ts[index_of_most_positive_zs])
         return right_pairs[index_of_most_positive_zs]
 
 
 def main():
-    data_dir = '../data/KITTI_sequence_1'  # Try KITTI_sequence_2 too
+    data_dir = '/home/lpe/Desktop/master2.sem/vision/AdvancedComputerVisionExercises/lec_3_visual_odometry/KITTI_sequence_2'  # Try KITTI_sequence_2 too
     vo = VisualOdometry(data_dir)
 
     #play_trip(vo.images)  # Comment out to not play the trip
-
     gt_path = []
     estimated_path = []
     for i, gt_pose in enumerate(tqdm(vo.gt_poses, unit="pose")):
